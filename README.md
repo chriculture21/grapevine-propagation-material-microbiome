@@ -11,8 +11,8 @@ Samples were grouped by three factors, which correspond to columns in the phylos
 | Variable | Levels | Description |
 |---|---|---|
 | `Type` | `C`, `GU`, `GR` | Type of propagation material: C = Canes, GU = grafted unrooted vines, GR = grafted rooted vines|
-| `Variety` | Variety, rootstock, or scion/rootstock combination |
-| `Biomass` `Low`, `High` | Low, or high pathogen biomass based on qPCR assays |
+| `Variety` | `Different varieties and combinations of grafted vines` | Variety, rootstock, or scion/rootstock combination |
+| `Biomass` | `Low`, `High` | Low, or high pathogen biomass based on qPCR assays |
 
 ## Workflow
 
