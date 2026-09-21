@@ -96,7 +96,6 @@ Genus-level co-occurrence networks for grafted unrooted (GU) and grafted rooted 
 
 - The GU script also tests whether network clusters are structured by oxygen requirement (Fisher's exact test). This requires adding an `Oxygen` column (aerobe / anaerobe / facultative, assigned from the literature) to the exported cluster table.
 - The GR script uses the same phylum colour key as the GU script so the figures are directly comparable. It then builds both networks together and compares them with `netCompare()` (permutation test).
-- In the GR script, ASVs assigned to *Xylella* are relabelled as `Xanthomonadaceae_unclassified` [state the reason, e.g. assignment not supported by ...].
 
 Outputs: `Network_GU.pdf`, `Network_GR.pdf`, `Network_GU_vs_GR.pdf`, `Network_GU_clusters.csv`, `Network_GR_clusters.csv`
 
