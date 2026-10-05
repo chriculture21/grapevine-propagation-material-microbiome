@@ -18,7 +18,7 @@ setwd('~path')
 
 # Load data
 fungi_cleaned <- readRDS("fungi_cleaned.rds")
-bacteria_cleaned <- readRDS("bacteria_Cleaned.rds")
+bacteria_cleaned <- readRDS("bacteria_cleaned.rds")
 
 # Rename the phyloseq object for clarity
 ps <- fungi_cleaned
