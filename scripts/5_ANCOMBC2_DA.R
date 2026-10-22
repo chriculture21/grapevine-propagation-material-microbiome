@@ -1,5 +1,4 @@
-# Differential abundance analysis between the different types of propagation material
-# with ANCOMBC2
+# Differential abundance analysis between the different types of propagation material with ANCOMBC2
 # Load libraries
 library(phyloseq)
 library(ANCOMBC)
@@ -17,166 +16,149 @@ library(openxlsx)
 setwd('~path')
 
 # Load data
-fungi_cleaned <- readRDS("fungi_cleaned.rds")
-bacteria_cleaned <- readRDS("bacteria_cleaned.rds")
+ps <- readRDS("fungi_cleaned.rds") #not rarefied
+ps2 <- readRDS("bacteria_cleaned.rds") #not rarefied
 
-# Rename the phyloseq object for clarity
-ps <- fungi_cleaned
-ps1 <- bacteria_cleaned
-
-# Aggregate to the desired level (for instance Genus)
-ps_genus <- tax_glom(ps, taxrank = "Genus")
-ps_genus2 <- tax_glom(ps1, taxrank = "Genus")
-
-# Run differential abundance analysis using ANCOMBC2 for fungi
+# Run differential abundance for fungi
 out <- ancombc2(
-  data = ps_genus,            # phyloseq object
-  tax_level = NULL,           # NULL if already glommed
-  fix_formula = "Type",
+  data = ps,            # phyloseq object
+  tax_level = "Genus",
+  fix_formula = "Type + Biomass",
+  struc_zero = TRUE,
+  neg_lb = FALSE,
+  verbose = TRUE,
+  pairwise = TRUE,
+  dunnet = FALSE,
+  trend = FALSE,
+  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+  trend_control = NULL,
   group = "Type",             # your main variable
-  rand_formula = NULL,        # random effects if needed
+  rand_formula = NULL,
   alpha = 0.05,
-  p_adj_method = "fdr",
-  lib_cut = 1000,             # min library size
+  p_adj_method = "holm",
+  lib_cut = 1206,             # min library size
   prv_cut = 0.10,             # prevalence filter (10%)
   s0_perc = 0.05,
-  n_cl = 1,                   # number of threads
+  n_cl = 2,                   # number of threads
   global = TRUE
 )
 
 # and for bacteria
 out2 <- ancombc2(
-  data = ps_genus2,           # phyloseq object directly
-  tax_level = NULL,           # NULL if already glommed
-  fix_formula = "Type",
+  data = ps2,
+  tax_level = "Genus",
+  fix_formula = "Type + Biomass",
+  struc_zero = TRUE,
+  neg_lb = FALSE,
+  verbose = TRUE,
+  pairwise = TRUE,
+  dunnet = FALSE,
+  trend = FALSE,
+  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+  trend_control = NULL,
   group = "Type",             # main variable
-  rand_formula = NULL,        # random effects if needed
+  rand_formula = NULL,
   alpha = 0.05,
-  p_adj_method = "fdr",
-  lib_cut = 1000,             # min library size
+  p_adj_method = "holm",
+  lib_cut = 400,             # min library size
   prv_cut = 0.10,             # prevalence filter (10%)
   s0_perc = 0.05,
-  n_cl = 1,                   # number of threads
+  n_cl = 2,                   # number of threads
   global = TRUE
 )
 
 # Get the results table for both fungi and bacteria
-results <- out$res
-results2 <- out2$res
+results <- out$res #for fungi
+results2 <- out2$res #for bacteria
 
-# Extract the taxonomy from the phyloseq object
-tax_df <- as.data.frame(tax_table(ps_genus)) # for fungi
-tax_df$taxon <- rownames(tax_df)
+# remove prefix from fungal taxonomy
+results <- results %>%
+  mutate(taxon = gsub("^[a-z]__", "", taxon))
 
-tax_df2 <- as.data.frame(tax_table(ps_genus2)) # for bacteria
-tax_df2$taxon <- rownames(tax_df2)
+# Select only the desired columns from the results and generate the data frames
+sig_ancombc1 <- results %>%
+  filter(q_TypeGU < 0.05, abs(lfc_TypeGU) > 1) %>%
+  dplyr::select(taxon, lfc_TypeGU, se_TypeGU, q_TypeGU)
 
-# join ANCOMBC results with taxonomy
-res_tax <- results %>%
-  left_join(tax_df %>% dplyr::select(taxon, Genus), by = "taxon") %>%
-  mutate(Genus = gsub("^[a-z]__", "", Genus))
+sig_ancombc2 <- results %>%
+  filter(q_TypeGR < 0.05, abs(lfc_TypeGR) > 1) %>%
+  dplyr::select(taxon, lfc_TypeGR, se_TypeGR, q_TypeGR)
 
-res_tax2 <- results2 %>%
-  left_join(tax_df2 %>% dplyr::select(taxon, Genus), by = "taxon") %>%
-  mutate(Genus = gsub("^[a-z]__", "", Genus))
+sig_ancombc3 <- results2 %>%
+  filter(q_TypeGU < 0.001, abs(lfc_TypeGU) > 1) %>%
+  dplyr::select(taxon, lfc_TypeGU, se_TypeGU, q_TypeGU)
 
-# Filter significant genera (adjusted p < 0.05 or < 0.001 in any contrast)
-sig_ancombc1 <- res_tax %>%
-  filter(q_TypeGU < 0.05) %>%
-  dplyr::select(taxon, Genus, lfc_TypeGU, se_TypeGU, p_TypeGU)
+sig_ancombc4 <- results2 %>%
+  filter(q_TypeGR < 0.001, abs(lfc_TypeGR) > 1) %>%
+  dplyr::select(taxon, lfc_TypeGR, se_TypeGR, q_TypeGR)
 
-sig_ancombc2 <- res_tax %>%
-  filter(q_TypeGR < 0.05) %>%
-  dplyr::select(taxon, Genus, lfc_TypeGR, se_TypeGR, p_TypeGR)
-
-sig_ancombc3 <- res_tax2 %>%
-  filter(q_TypeGU < 0.001) %>%
-  dplyr::select(taxon, Genus, lfc_TypeGU, se_TypeGU, p_TypeGU)
-
-sig_ancombc4 <- res_tax2 %>%
-  filter(q_TypeGR < 0.001) %>%
-  dplyr::select(taxon, Genus, lfc_TypeGR, se_TypeGR, p_TypeGR)
-
-# Add a new column in the dataframe, indicating if a genus is enriched, 
-# depleted or not significantly different based on the desired p-value and log fold change
+# Add a new column in the dataframe, indicating if a genus is enriched or depleted q-value and log fold change
 # C vs GU - Fungi
 sig_ancombc1 <- sig_ancombc1 %>%
   mutate(Significance = case_when(
-    lfc_TypeGU >=1 & p_TypeGU <= 0.05 ~ 'Enriched',
-    lfc_TypeGU <=-1 & p_TypeGU <= 0.05 ~ 'Depleted',
-    abs(lfc_TypeGU) < 1 | p_TypeGU > 0.05 ~ 'Not Significant'
+    lfc_TypeGU >=1 & q_TypeGU <= 0.05 ~ 'Enriched',
+    lfc_TypeGU <=-1 & q_TypeGU <= 0.05 ~ 'Depleted',
+    abs(lfc_TypeGU) < 1 | q_TypeGU > 0.05 ~ 'Not significant'
   ))
 
 sig_ancombc1 = sig_ancombc1 %>%
-  mutate(y_label = paste0(taxon, " | ", Genus)) %>%
   arrange(lfc_TypeGU)
-
-sig_ancombc1$y_label <- factor(sig_ancombc1$y_label, levels = sig_ancombc1$y_label)
 
 # C vs GR - Fungi
 sig_ancombc2 <- sig_ancombc2 %>%
   mutate(Significance = case_when(
-    lfc_TypeGR >=1 & p_TypeGR <= 0.05 ~ 'Enriched',
-    lfc_TypeGR <=-1 & p_TypeGR <= 0.05 ~ 'Depleted',
-    abs(lfc_TypeGR) < 1 | p_TypeGR > 0.05 ~ 'Not significant'
+    lfc_TypeGR >=1 & q_TypeGR <= 0.05 ~ 'Enriched',
+    lfc_TypeGR <=-1 & q_TypeGR <= 0.05 ~ 'Depleted',
+    abs(lfc_TypeGR) < 1 | q_TypeGR > 0.05 ~ 'Not significant'
   ))
 
 sig_ancombc2 = sig_ancombc2 %>%
-  mutate(y_label = paste0(taxon, " | ", Genus)) %>%
   arrange(lfc_TypeGR)
-
-sig_ancombc2$y_label <- factor(sig_ancombc2$y_label, levels = sig_ancombc2$y_label)
 
 # C vs GU - Bacteria
 sig_ancombc3 <- sig_ancombc3 %>%
   mutate(Significance = case_when(
-    lfc_TypeGU >=1 & p_TypeGU <= 0.001 ~ 'Enriched',
-    lfc_TypeGU <=-1 & p_TypeGU <= 0.001 ~ 'Depleted',
-    abs(lfc_TypeGU) < 1 | p_TypeGU > 0.001 ~ 'Not significant',
+    lfc_TypeGU >=1 & q_TypeGU <= 0.001 ~ 'Enriched',
+    lfc_TypeGU <=-1 & q_TypeGU <= 0.001 ~ 'Depleted',
+    abs(lfc_TypeGU) < 1 | q_TypeGU > 0.001 ~ 'Not significant',
   ))
 
 sig_ancombc3 = sig_ancombc3 %>%
-  mutate(y_label = paste0(taxon, " | ", Genus)) %>%
   arrange(lfc_TypeGU)
-
-sig_ancombc3$y_label <- factor(sig_ancombc3$y_label, levels = sig_ancombc3$y_label)
 
 # C vs GR - Bacteria
 sig_ancombc4 <- sig_ancombc4 %>%
   mutate(Significance = case_when(
-    lfc_TypeGR >=1 & p_TypeGR <= 0.001 ~ 'Enriched',
-    lfc_TypeGR <=-1 & p_TypeGR <= 0.001 ~ 'Depleted',
-    abs(lfc_TypeGR) < 1 | p_TypeGR > 0.001 ~ 'Not significant'
+    lfc_TypeGR >=1 & q_TypeGR <= 0.05 ~ 'Enriched',
+    lfc_TypeGR <=-1 & q_TypeGR <= 0.05 ~ 'Depleted',
+    abs(lfc_TypeGR) < 1 | q_TypeGR > 0.05 ~ 'Not significant'
   ))
 
 sig_ancombc4 = sig_ancombc4 %>%
-  mutate(y_label = paste0(taxon, " | ", Genus)) %>%
   arrange(lfc_TypeGR)
 
-sig_ancombc4$y_label <- factor(sig_ancombc4$y_label, levels = sig_ancombc4$y_label)
-
-# Genus names in italics for the plot
+# Only Genus names in italics for the plot
 italicize_genus <- function(x) {
   higher <- "(mycota|mycotina|mycetes|mycetidae|ales|ineae|aceae|oideae|eae)$"
   vapply(x, function(lab) {
     p <- strsplit(lab, " \\| ")[[1]]
-    if (length(p) < 2) return(lab)                    # no taxon part
-    tax <- p[2]
+    prefix <- if (length(p) >= 2) paste0(p[1], " | ") else ""
+    tax <- p[length(p)]                                  # last part = taxon name
     if (grepl(higher, tax) ||
         grepl("unidentified|unclassified|incertae", tax, ignore.case = TRUE)) {
-      lab                                             # leave roman
+      lab                                                # leave roman
     } else {
-      paste0(p[1], " | *", tax, "*")                  # genus → italic
+      paste0(prefix, "*", tax, "*")                      # genus → italic
     }
   }, character(1), USE.NAMES = FALSE)
 }
 
 ## Create lfc barplots with standard error - Fungi
-pdf(file = "DA_Fungi.pdf",   # The directory you want to save the file in
+pdf(file = "~DA_Fungi.pdf",   # The directory you want to save the file in
     width = 14,
     height = 8)
 
-a <- ggplot(sig_ancombc1, aes(x = y_label, y = lfc_TypeGU, fill = Significance)) +
+a <- ggplot(sig_ancombc1, aes(x = taxon, y = lfc_TypeGU, fill = Significance)) +
   geom_bar(stat = "identity", width = 0.8, color = "black") +
   geom_errorbar(aes(ymin = lfc_TypeGU - se_TypeGU, ymax = lfc_TypeGU + se_TypeGU), width = 0.2, color = "black") +
   geom_hline(yintercept = 0.0, linewidth=0.7, color = "red", linetype = "dashed")+
@@ -188,7 +170,7 @@ a <- ggplot(sig_ancombc1, aes(x = y_label, y = lfc_TypeGU, fill = Significance))
     x = NULL,
     y = NULL,
     title = "C vs GU",
-    subtitle = "p-value cutoff = 0.05; lfc cutoff = 1"
+    subtitle = "q-value cutoff = 0.05; lfc cutoff = 1"
   ) +
   theme_gray() +
   theme(
@@ -207,7 +189,7 @@ a <- ggplot(sig_ancombc1, aes(x = y_label, y = lfc_TypeGU, fill = Significance))
     legend.position = "bottom"
   )
 
-b <- ggplot(sig_ancombc2, aes(x = y_label, y = lfc_TypeGR, fill = Significance)) +
+b <- ggplot(sig_ancombc2, aes(x = taxon, y = lfc_TypeGR, fill = Significance)) +
   geom_bar(stat = "identity", width = 0.8, color = "black") +
   geom_errorbar(aes(ymin = lfc_TypeGR - se_TypeGR, ymax = lfc_TypeGR + se_TypeGR), width = 0.2, color = "black") +
   geom_hline(yintercept = 0.0, linewidth=0.7, color = "red", linetype = "dashed")+
@@ -219,7 +201,7 @@ b <- ggplot(sig_ancombc2, aes(x = y_label, y = lfc_TypeGR, fill = Significance))
     x = NULL,
     y = NULL,
     title = "C vs GR",
-    subtitle = "p-value cutoff = 0.05; lfc cutoff = 1"
+    subtitle = "q-value cutoff = 0.05; lfc cutoff = 1"
   ) +
   theme_gray() +
   theme(
@@ -240,9 +222,10 @@ b <- ggplot(sig_ancombc2, aes(x = y_label, y = lfc_TypeGR, fill = Significance))
 
 fig <- ggarrange(a, b, ncol = 2, nrow = 1,
                  align = "hv", common.legend = TRUE,
+                 legend = "top",
                  labels = c("(a)", "(b)"),
-                 label.x = 0.02, label.y = 0.05,
-                 font.label = list(size = 20, face = "bold", color = "black"))
+                 label.x = 0, label.y = 1,
+                 font.label = list(size = 20, face = "bold", color = "black")) #arrange the two plots side by side
 
 print(
   annotate_figure(fig,
@@ -250,33 +233,51 @@ print(
                   left   = text_grob("Taxon", size = 18, face = "bold", rot = 90))
 )
 
-dev.off()
+dev.off() #close the devise
 
 # lfc barplots for bacteria
 n_tax  <- max(nrow(sig_ancombc3), nrow(sig_ancombc4))
 fs     <- 8
 
-pdf(file = "DA_bacteria.pdf",   # The directory you want to save the file in
-    width = 22,
-    height = n_tax * fs * 1.3 / 72 + 3)
+italicize_genus <- function(x) {
+  higher <- "(mycota|mycotina|mycetes|mycetidae|ales|ineae|aceae|oideae|eae)$"
+  out <- vapply(x, function(lab) {
+    p <- strsplit(lab, " \\| ")[[1]]
+    prefix <- if (length(p) >= 2) paste0(p[1], " | ") else ""
+    tax <- p[length(p)]
+    if (grepl(higher, tax) ||
+        grepl("unidentified|unclassified|incertae", tax, ignore.case = TRUE)) {
+      lab
+    } else {
+      paste0(prefix, "*", tax, "*")
+    }
+  }, character(1), USE.NAMES = FALSE)
+  
+  # wrap the long Rhizobium-group name over two lines
+  sub("Allorhizobium-Neorhizobium-", "Allorhizobium-Neorhizobium-*<br>*", out, fixed = TRUE)
+}
 
-c <- ggplot(sig_ancombc3, aes(x = y_label, y = lfc_TypeGU, fill = Significance)) +
+pdf(file = "~DA_bacteria.pdf",   # The directory you want to save the file in
+    width = 14,
+    height = 8)
+
+c <- ggplot(sig_ancombc3, aes(reorder(taxon, lfc_TypeGU), y = lfc_TypeGU, fill = Significance)) +
   geom_bar(stat = "identity", width = 0.8, color = "black") +
   geom_errorbar(aes(ymin = lfc_TypeGU - se_TypeGU, ymax = lfc_TypeGU + se_TypeGU), width = 0.2, color = "black") +
   geom_hline(yintercept = 0.0, linewidth=0.7, color = "red", linetype = "dashed")+
   geom_hline(yintercept=c(-1, 1), col="red", linetype = 'dashed')+
   scale_fill_manual(values = c('darkred','darkblue','lightgreen'))+
-  scale_x_discrete(labels = ~ sub("\\| (.*)$", "| *\\1*", .x)) +
+  scale_x_discrete(labels = italicize_genus) +
   coord_flip() +
   labs(
     x = NULL,
     y = NULL,
     title = "C vs GU",
-    subtitle = "p-value cutoff = 0.001; lfc cutoff = 1"
+    subtitle = "q-value cutoff = 0.001; lfc cutoff = 1"
   ) +
   theme_gray() +
   theme(
-    axis.text.y = element_markdown(size = 14),
+    axis.text.y = element_markdown(size = 14, face = 'italic'),
     axis.text.x = element_text(size = 16),
     axis.line.x = element_line(),
     axis.line.y = element_line(),
@@ -288,26 +289,26 @@ c <- ggplot(sig_ancombc3, aes(x = y_label, y = lfc_TypeGU, fill = Significance))
     plot.subtitle = element_text(size = 16, face = "italic"),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA),
-    legend.position = "bottom"
+    legend.position = "none"
   )
 
-d <- ggplot(sig_ancombc4, aes(x = y_label, y = lfc_TypeGR, fill = Significance)) +
+d <- ggplot(sig_ancombc4, aes(x = reorder(taxon, lfc_TypeGR), y = lfc_TypeGR, fill = Significance)) +
   geom_bar(stat = "identity", width = 0.8, color = "black") +
   geom_errorbar(aes(ymin = lfc_TypeGR - se_TypeGR, ymax = lfc_TypeGR + se_TypeGR), width = 0.2, color = "black") +
   geom_hline(yintercept = 0.0, linewidth=0.7, color = "red", linetype = "dashed")+
   geom_hline(yintercept=c(-1, 1), col="red", linetype = 'dashed')+
   scale_fill_manual(values = c('darkred','darkblue','lightgreen'))+
-  scale_x_discrete(labels = ~ sub("\\| (.*)$", "| *\\1*", .x)) +
+  scale_x_discrete(labels = italicize_genus) +
   coord_flip() +
   labs(
     x = NULL,
     y = NULL,
     title = "C vs GR",
-    subtitle = "p-value cutoff = 0.001; lfc cutoff = 1"
+    subtitle = "q-value cutoff = 0.001; lfc cutoff = 1"
   ) +
   theme_gray() +
   theme(
-    axis.text.y = element_markdown(size = 14),
+    axis.text.y = element_markdown(size = 14, face = 'italic'),
     axis.text.x = element_text(size = 16),
     axis.line.x = element_line(),
     axis.line.y = element_line(),
@@ -319,14 +320,14 @@ d <- ggplot(sig_ancombc4, aes(x = y_label, y = lfc_TypeGR, fill = Significance))
     plot.subtitle = element_text(size = 16, face = "italic"),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA),
-    legend.position = "bottom"
+    legend.position = "none"
   )
 
 fig <- ggarrange(c, d, ncol = 2, nrow = 1,
-                 align = "h", common.legend = TRUE,
-                 labels = c("(a)", "(b)"),
-                 label.x = 0.02, label.y = 0.05,
-                 font.label = list(size = 20, face = "bold", color = "black"))
+                 align = "hv", common.legend = FALSE, legend = NULL,
+                 labels = c("(c)", "(d)"),
+                 label.x = 0, label.y = 1,
+                 font.label = list(size = 20, face = "bold", color = "black")) #arrange the two plots side by side
 
 print(
   annotate_figure(fig,
@@ -336,11 +337,13 @@ print(
 
 dev.off() # close device
 
-# Save the data used for plotting
-write.xlsx(sig_ancombc1, "C:/Users/User/Desktop/DA_Fungi_CvsGU.xlsx")
-write.xlsx(sig_ancombc2, "C:/Users/User/Desktop/DA_Fungi_CvsGR.xlsx")
-write.xlsx(sig_ancombc3, "C:/Users/User/Desktop/DA_Bacteria_CvsGU.xlsx")
-write.xlsx(sig_ancombc4, "C:/Users/User/Desktop/DA_Bacteria_CvsGR.xlsx")
+# Save the data in xlsx files
+write.xlsx(sig_ancombc1, "~DA_CvsGU_Fungi.xlsx")
+write.xlsx(sig_ancombc2, "~DA_CvsGR_Fungi.xlsx")
+write.xlsx(results, "~All_DA_Fungi.xlsx")
+write.xlsx(sig_ancombc3, "~DA_CvsGU_Bacteria.xlsx")
+write.xlsx(sig_ancombc4, "~DA_CvsGR_Bacteria.xlsx")
+write.xlsx(results2, "~All_DA_Bacteria.xlsx")
 
 # Save session
 sessionInfo()
